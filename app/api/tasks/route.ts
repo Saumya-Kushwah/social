@@ -53,7 +53,7 @@ export async function DELETE(request: Request) {
 
     tasks = tasks.filter((task) => task.id !== id);
     return Response.json({ message: "Task deleted" });
-  } catch (error) {
+  } catch (_error) {
     return Response.json({ error: "Invalid request" }, { status: 400 });
   }
 }

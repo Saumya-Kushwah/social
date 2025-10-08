@@ -1,0 +1,4 @@
+# .eslintignore
+
+# Ignore Prisma's auto-generated client
+lib/generated/prisma

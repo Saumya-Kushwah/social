@@ -20,13 +20,25 @@ export const ourFileRouter = {
       return { userId };
     })
     .onUploadComplete(async ({ metadata, file }) => {
-      try {
-        return { fileUrl: file.url };
-      } catch (error) {
-        console.error("Error in onUploadComplete:", error);
-        throw error;
-      }
-    }),
+  try {
+    // You have the userId and fileUrl here
+    console.log("Upload complete for user:", metadata.userId);
+    console.log("File URL:", file.url);
+
+    // 👇 Example: Update the user's profile picture URL in your database
+    // await db.user.update({
+    //   where: { id: metadata.userId },
+    //   data: { profileImageUrl: file.url },
+    // });
+
+    return { fileUrl: file.url };
+  } catch (error) {
+    console.error("Error saving to database:", error);
+    // You might want to delete the uploaded file from UploadThing here
+    // if the database update fails.
+    throw new Error("Failed to save file URL to database.");
+  }
+}),
 } satisfies FileRouter;
 
 export type OurFileRouter = typeof ourFileRouter;
