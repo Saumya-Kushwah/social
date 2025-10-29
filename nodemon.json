@@ -1,0 +1,12 @@
+{
+  "watch": ["server.ts", "lib/**/*", "actions/**/*", "types/**/*"],
+  "ignore": [
+    ".next/**/*",
+    "node_modules/**/*",
+    ".git/**/*",
+    "public/**/*",
+    "*.log"
+  ],
+  "ext": "ts,js,json",
+  "exec": "ts-node server.ts"
+}

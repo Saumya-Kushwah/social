@@ -37,6 +37,9 @@ model User {
 
   notifications        Notification[] @relation("userNotifications") // notifications received by a user
   notificationsCreated Notification[] @relation("notificationCreator") // notifications triggered by a user
+
+  conversationParticipants ConversationParticipant[]
+  messages                 Message[]
 }
 
 model Post {
@@ -120,3 +123,53 @@ enum NotificationType {
   COMMENT
   FOLLOW
 }
+
+// Add these models to your existing prisma/schema.prisma file
+
+model Conversation {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([updatedAt])
+}
+
+model ConversationParticipant {
+  id             String   @id @default(cuid())
+  conversationId String
+  userId         String
+  joinedAt       DateTime @default(now())
+  lastReadAt     DateTime @default(now())
+
+  // Relations
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@index([conversationId])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  senderId       String
+  content        String   @db.Text
+  createdAt      DateTime @default(now())
+  read           Boolean  @default(false)
+
+  // Relations
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+}
+
+// Add these to the User model relations:
+// conversationParticipants ConversationParticipant[]
+// messages                 Message[]
