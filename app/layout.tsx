@@ -8,6 +8,7 @@ import Sidebar from "@/components/Sidebar";
 import { Toaster } from "react-hot-toast";
 import { syncUser, getUserByClerkId } from "@/actions/user.action";
 import SocketProvider from "@/components/SocketProvider";
+import CallProvider from "@/components/CallProvider";
 import { currentUser } from "@clerk/nextjs/server";
 
 const geistSans = localFont({
@@ -51,21 +52,23 @@ export default async function RootLayout({
             disableTransitionOnChange
           >
             <SocketProvider userId={dbUserId}>
-              <div className="min-h-screen">
-                <Navbar />
+              <CallProvider currentUserId={dbUserId}>
+                <div className="min-h-screen">
+                  <Navbar />
 
-                <main className="py-8">
-                  <div className="max-w-7xl mx-auto px-4">
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                      <div className="hidden lg:block lg:col-span-3">
-                        <Sidebar />
+                  <main className="py-8">
+                    <div className="max-w-7xl mx-auto px-4">
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                        <div className="hidden lg:block lg:col-span-3">
+                          <Sidebar />
+                        </div>
+                        <div className="lg:col-span-9">{children}</div>
                       </div>
-                      <div className="lg:col-span-9">{children}</div>
                     </div>
-                  </div>
-                </main>
-              </div>
-              <Toaster />
+                  </main>
+                </div>
+                <Toaster />
+              </CallProvider>
             </SocketProvider>
           </ThemeProvider>
         </body>

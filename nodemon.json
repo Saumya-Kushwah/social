@@ -1,12 +1,13 @@
 {
-  "watch": ["server.ts", "lib/**/*", "actions/**/*", "types/**/*"],
+  "watch": ["socket-server.ts", "lib/**/*", "types/**/*"],
   "ignore": [
     ".next/**/*",
     "node_modules/**/*",
     ".git/**/*",
     "public/**/*",
+    "actions/**/*",
     "*.log"
   ],
   "ext": "ts,js,json",
-  "exec": "ts-node server.ts"
+  "exec": "tsx socket-server.ts"
 }

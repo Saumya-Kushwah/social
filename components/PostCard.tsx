@@ -108,10 +108,18 @@ function PostCard({ post, dbUserId }: { post: Post; dbUserId: string | null }) {
             </div>
           </div>
 
-          {/* POST IMAGE */}
+          {/* POST IMAGE - FIXED */}
           {post.image && (
-            <div className="rounded-lg overflow-hidden">
-              <Image src={post.image} alt="Post content" className="w-full h-auto object-cover" />
+            <div className="relative w-full rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800">
+              <Image 
+                src={post.image} 
+                alt="Post content" 
+                width={800}
+                height={600}
+                className="w-full h-auto object-cover" 
+                priority={false}
+                quality={90}
+              />
             </div>
           )}
 
@@ -125,6 +133,7 @@ function PostCard({ post, dbUserId }: { post: Post; dbUserId: string | null }) {
                   hasLiked ? "text-red-500 hover:text-red-600" : "hover:text-red-500"
                 }`}
                 onClick={handleLike}
+                disabled={isLiking}
               >
                 {hasLiked ? (
                   <HeartIcon className="size-5 fill-current" />

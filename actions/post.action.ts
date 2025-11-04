@@ -20,7 +20,7 @@ export async function createPost(content: string, image: string) {
 
     revalidatePath("/"); // purge the cache for the home page
     return { success: true, post };
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Failed to create post:", error);
     return { success: false, error: "Failed to create post" };
   }
@@ -71,9 +71,22 @@ export async function getPosts() {
     });
 
     return posts;
-  } catch (error) {
-    console.log("Error in getPosts", error);
-    throw new Error("Failed to fetch posts");
+  } catch (error: unknown) {
+    console.error("Error in getPosts:", error);
+    
+    // Log detailed error information
+    if (error instanceof Error) {
+      console.error("Error message:", error.message);
+      console.error("Error stack:", error.stack);
+    }
+    
+    // Check if it's a Prisma error
+    if (error && typeof error === 'object' && 'code' in error) {
+      console.error("Prisma error code:", (error as { code: string }).code);
+    }
+    
+    // Return empty array instead of throwing to prevent page crash
+    return [];
   }
 }
 
@@ -135,7 +148,7 @@ export async function toggleLike(postId: string) {
 
     revalidatePath("/");
     return { success: true };
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Failed to toggle like:", error);
     return { success: false, error: "Failed to toggle like" };
   }
@@ -184,7 +197,7 @@ export async function createComment(postId: string, content: string) {
 
     revalidatePath(`/`);
     return { success: true, comment };
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Failed to create comment:", error);
     return { success: false, error: "Failed to create comment" };
   }
@@ -208,7 +221,7 @@ export async function deletePost(postId: string) {
 
     revalidatePath("/"); // purge the cache
     return { success: true };
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Failed to delete post:", error);
     return { success: false, error: "Failed to delete post" };
   }
