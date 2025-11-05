@@ -25,14 +25,26 @@ export function useCall() {
 interface CallProviderProps {
   children: ReactNode;
   currentUserId: string | null;
+  currentUser: ChatUser | null; // ✅ ADDED: Current user data
 }
 
-export default function CallProvider({ children, currentUserId }: CallProviderProps) {
+export default function CallProvider({ 
+  children, 
+  currentUserId,
+  currentUser 
+}: CallProviderProps) {
   const { socket } = useSocket();
   const [incomingCall, setIncomingCall] = useState<CallInitiatedData | null>(null);
 
+  // ✅ FIXED: Pass currentUser to useWebRTC
   const webrtc = useWebRTC({
     currentUserId: currentUserId || "",
+    currentUser: currentUser || {
+      id: currentUserId || "",
+      username: "Unknown",
+      name: "Unknown",
+      image: null,
+    },
     onCallEnded: () => {
       setIncomingCall(null);
     },
@@ -43,9 +55,16 @@ export default function CallProvider({ children, currentUserId }: CallProviderPr
     if (!socket) return;
 
     socket.on("call-initiated", (data: CallInitiatedData) => {
+      console.log("📞 Incoming call from:", data.callerName);
       // Only show incoming call if not already in a call
       if (webrtc.callStatus === "idle") {
         setIncomingCall(data);
+      } else {
+        // If already in call, automatically reject
+        socket.emit("reject-call", {
+          to: data.from,
+          callId: data.callId,
+        });
       }
     });
 
@@ -53,6 +72,24 @@ export default function CallProvider({ children, currentUserId }: CallProviderPr
       socket.off("call-initiated");
     };
   }, [socket, webrtc.callStatus]);
+
+  // ✅ ADDED: Handle socket disconnect during call
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleDisconnect = () => {
+      if (webrtc.callStatus !== "idle") {
+        console.log("🔴 Socket disconnected during call, ending call...");
+        webrtc.endCall();
+      }
+    };
+
+    socket.on("disconnect", handleDisconnect);
+
+    return () => {
+      socket.off("disconnect", handleDisconnect);
+    };
+  }, [socket, webrtc.callStatus, webrtc.endCall]);
 
   const startVoiceCall = (user: ChatUser) => {
     webrtc.startCall(user, false);
@@ -101,6 +138,7 @@ export default function CallProvider({ children, currentUserId }: CallProviderPr
           isScreenSharing={webrtc.isScreenSharing}
           callStatus={webrtc.callStatus}
           otherUser={webrtc.otherUser}
+          error={webrtc.error} // ✅ ADDED: Pass error
           onToggleVideo={webrtc.toggleVideo}
           onToggleAudio={webrtc.toggleAudio}
           onToggleScreenShare={webrtc.toggleScreenShare}

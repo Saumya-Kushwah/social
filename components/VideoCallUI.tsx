@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { X, Mic, MicOff, Video, VideoOff, Monitor, Phone } from "lucide-react";
+import { X, Mic, MicOff, Video, VideoOff, Monitor, Phone, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import type { ChatUser } from "@/types/chat.types";
@@ -14,6 +14,7 @@ interface VideoCallUIProps {
   isScreenSharing: boolean;
   callStatus: "calling" | "ringing" | "connected" | "ended";
   otherUser: ChatUser;
+  error?: string | null; // ✅ ADDED: Error message
   onToggleVideo: () => void;
   onToggleAudio: () => void;
   onToggleScreenShare: () => void;
@@ -28,6 +29,7 @@ export default function VideoCallUI({
   isScreenSharing,
   callStatus,
   otherUser,
+  error,
   onToggleVideo,
   onToggleAudio,
   onToggleScreenShare,
@@ -36,18 +38,32 @@ export default function VideoCallUI({
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
 
-  // Setup local video
+  // ✅ IMPROVED: Setup local video with cleanup
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream;
     }
+
+    // Cleanup function
+    return () => {
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = null;
+      }
+    };
   }, [localStream]);
 
-  // Setup remote video
+  // ✅ IMPROVED: Setup remote video with cleanup
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
       remoteVideoRef.current.srcObject = remoteStream;
     }
+
+    // Cleanup function
+    return () => {
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = null;
+      }
+    };
   }, [remoteStream]);
 
   return (
@@ -77,6 +93,14 @@ export default function VideoCallUI({
               {callStatus === "ringing" && "Ringing..."}
               {callStatus === "connected" && "Connected"}
             </p>
+            
+            {/* ✅ ADDED: Error display */}
+            {error && (
+              <div className="mt-4 flex items-center gap-2 bg-red-500/20 border border-red-500 rounded-lg px-4 py-2 max-w-md">
+                <AlertCircle className="w-5 h-5 text-red-400" />
+                <p className="text-red-400 text-sm">{error}</p>
+              </div>
+            )}
           </div>
         )}
 
@@ -101,10 +125,29 @@ export default function VideoCallUI({
 
         {/* Call Info */}
         <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm px-4 py-2 rounded-lg">
-          <p className="text-white text-sm">
-            {callStatus === "connected" ? "Connected" : "Connecting..."}
+          <p className="text-white text-sm flex items-center gap-2">
+            {callStatus === "connected" ? (
+              <>
+                <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                Connected
+              </>
+            ) : (
+              <>
+                <span className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
+                Connecting...
+              </>
+            )}
           </p>
         </div>
+
+        {/* Connection Status */}
+        {callStatus === "connected" && remoteStream && (
+          <div className="absolute top-16 left-4 bg-black/30 backdrop-blur-sm px-3 py-1 rounded-lg">
+            <p className="text-white/80 text-xs">
+              {isScreenSharing ? "Screen sharing" : "Video call"}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Controls */}
@@ -116,6 +159,7 @@ export default function VideoCallUI({
             size="lg"
             variant={isAudioEnabled ? "secondary" : "destructive"}
             className="rounded-full w-14 h-14"
+            title={isAudioEnabled ? "Mute microphone" : "Unmute microphone"}
           >
             {isAudioEnabled ? (
               <Mic className="w-6 h-6" />
@@ -130,6 +174,7 @@ export default function VideoCallUI({
             size="lg"
             variant={isVideoEnabled ? "secondary" : "destructive"}
             className="rounded-full w-14 h-14"
+            title={isVideoEnabled ? "Turn off camera" : "Turn on camera"}
           >
             {isVideoEnabled ? (
               <Video className="w-6 h-6" />
@@ -144,6 +189,7 @@ export default function VideoCallUI({
             size="lg"
             variant="destructive"
             className="rounded-full w-16 h-16 bg-red-500 hover:bg-red-600"
+            title="End call"
           >
             <Phone className="w-6 h-6 transform rotate-[135deg]" />
           </Button>
@@ -154,9 +200,20 @@ export default function VideoCallUI({
             size="lg"
             variant={isScreenSharing ? "default" : "secondary"}
             className="rounded-full w-14 h-14"
+            title={isScreenSharing ? "Stop sharing" : "Share screen"}
+            disabled={callStatus !== "connected"}
           >
             <Monitor className="w-6 h-6" />
           </Button>
+        </div>
+
+        {/* Hints */}
+        <div className="mt-4 text-center">
+          <p className="text-white/50 text-xs">
+            {callStatus === "connected" 
+              ? "Call is active" 
+              : "Establishing connection..."}
+          </p>
         </div>
       </div>
     </div>

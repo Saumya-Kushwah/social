@@ -1,27 +1,52 @@
-// socket-server.ts - Standalone Socket.IO server (separate from Next.js)
+// socket-server.ts - Standalone Socket.IO server with mobile support
 import { createServer } from "http";
 import { Server, Socket } from "socket.io";
 import prisma from "./lib/prisma";
 import type { ServerToClientEvents, ClientToServerEvents } from "./types/chat.types";
 
 const PORT: number = parseInt(process.env.SOCKET_PORT || "3001", 10);
-const CORS_ORIGIN: string = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+
+// ✅ IMPROVED: Support multiple origins for mobile testing
+const getAllowedOrigins = (): (string | RegExp)[] => {
+  const origins: (string | RegExp)[] = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+    /^http:\/\/192\.168\.\d{1,3}\.\d{1,3}:3000$/, // Local network (192.168.x.x)
+    /^http:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}:3000$/, // Alternative local network
+    /^http:\/\/172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}:3000$/, // Docker network
+  ];
+
+  // Add custom origins from environment
+  if (process.env.ALLOWED_ORIGINS) {
+    const customOrigins = process.env.ALLOWED_ORIGINS.split(",");
+    origins.push(...customOrigins);
+  }
+
+  return origins;
+};
 
 const httpServer = createServer();
 
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   cors: {
-    origin: CORS_ORIGIN,
+    origin: getAllowedOrigins(),
     methods: ["GET", "POST"],
     credentials: true,
   },
+  // ✅ ADDED: Better transport options for mobile
+  transports: ["websocket", "polling"],
+  pingTimeout: 60000,
+  pingInterval: 25000,
 });
 
 // Store online users with proper typing
 const onlineUsers = new Map<string, string>(); // userId -> socketId
 
 io.on("connection", (socket: Socket<ClientToServerEvents, ServerToClientEvents>) => {
-  console.log("✅ Client connected:", socket.id);
+  // ✅ ADDED: Log connection details
+  const clientIp = socket.handshake.address;
+  console.log("✅ Client connected:", socket.id, "from", clientIp);
 
   // User authentication with type assertion
   const userId: string = socket.handshake.auth.userId as string;
@@ -30,6 +55,8 @@ io.on("connection", (socket: Socket<ClientToServerEvents, ServerToClientEvents>)
     onlineUsers.set(userId, socket.id);
     socket.broadcast.emit("user-online", userId);
     console.log(`👤 User ${userId} is now online (${onlineUsers.size} users total)`);
+  } else {
+    console.warn("⚠️ Client connected without userId");
   }
 
   // Join a conversation room
@@ -47,7 +74,10 @@ io.on("connection", (socket: Socket<ClientToServerEvents, ServerToClientEvents>)
   // Send message
   socket.on("send-message", async (data: { conversationId: string; content: string }): Promise<void> => {
     try {
-      if (!userId) return;
+      if (!userId) {
+        console.error("❌ Cannot send message: No userId");
+        return;
+      }
 
       const message = await prisma.message.create({
         data: {
@@ -151,9 +181,14 @@ io.on("connection", (socket: Socket<ClientToServerEvents, ServerToClientEvents>)
         callerName: data.callerName,
         callerImage: data.callerImage,
       });
-      console.log(`📞 Call initiated from ${userId} to ${data.to}`);
+      console.log(`📞 ${data.isVideoCall ? 'Video' : 'Voice'} call initiated from ${userId} (${data.callerName}) to ${data.to}`);
     } else {
-      console.log(`⚠️ User ${data.to} is not online`);
+      console.log(`⚠️ User ${data.to} is not online (can't initiate call)`);
+      // Optionally emit a "user-not-available" event back to caller
+      socket.emit("call-rejected", {
+        callId: data.callId,
+        from: data.to,
+      });
     }
   });
 
@@ -166,6 +201,8 @@ io.on("connection", (socket: Socket<ClientToServerEvents, ServerToClientEvents>)
         from: userId,
       });
       console.log(`✓ Call ${data.callId} accepted by ${userId}`);
+    } else {
+      console.log(`⚠️ Cannot accept call: User ${data.to} is not online`);
     }
   });
 
@@ -244,51 +281,81 @@ io.on("connection", (socket: Socket<ClientToServerEvents, ServerToClientEvents>)
         from: userId,
         callId: data.callId,
       });
-      console.log(`🧊 ICE candidate sent from ${userId} to ${data.to}`);
+      // Don't log every ICE candidate to reduce noise
     }
   });
 
   // Handle disconnect
-  socket.on("disconnect", (): void => {
-    console.log("❌ Client disconnected:", socket.id);
+  socket.on("disconnect", (reason: string): void => {
+    console.log("❌ Client disconnected:", socket.id, "- Reason:", reason);
     if (userId) {
       onlineUsers.delete(userId);
       socket.broadcast.emit("user-offline", userId);
       console.log(`👤 User ${userId} is now offline (${onlineUsers.size} users remaining)`);
     }
   });
+
+  // ✅ ADDED: Handle errors
+  socket.on("error", (error: Error): void => {
+    console.error("🔴 Socket error:", error);
+  });
 });
 
 // Error handling
 httpServer.on("error", (err: Error): void => {
   console.error("❌ Socket server error:", err);
+  if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") {
+    console.error(`Port ${PORT} is already in use. Please use a different port.`);
+    process.exit(1);
+  }
 });
 
 // Graceful shutdown
-process.on("SIGTERM", (): void => {
-  console.log("🛑 SIGTERM received, closing server gracefully...");
-  httpServer.close((): void => {
-    prisma.$disconnect().then((): void => {
-      console.log("✅ Socket server closed and database disconnected");
-      process.exit(0);
+const gracefulShutdown = (signal: string): void => {
+  console.log(`\n🛑 ${signal} received, closing server gracefully...`);
+  
+  // Close socket.io connections
+  io.close(() => {
+    console.log("✅ All socket connections closed");
+    
+    // Close HTTP server
+    httpServer.close(() => {
+      console.log("✅ HTTP server closed");
+      
+      // Disconnect from database
+      prisma.$disconnect().then(() => {
+        console.log("✅ Database disconnected");
+        process.exit(0);
+      }).catch((err) => {
+        console.error("❌ Error disconnecting from database:", err);
+        process.exit(1);
+      });
     });
   });
-});
 
-process.on("SIGINT", (): void => {
-  console.log("🛑 SIGINT received, closing server gracefully...");
-  httpServer.close((): void => {
-    prisma.$disconnect().then((): void => {
-      console.log("✅ Socket server closed and database disconnected");
-      process.exit(0);
-    });
-  });
-});
+  // Force shutdown after 10 seconds
+  setTimeout(() => {
+    console.error("⚠️ Forced shutdown after timeout");
+    process.exit(1);
+  }, 10000);
+};
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 // Start server
-httpServer.listen(PORT, (): void => {
-  console.log(`\n🚀 Socket.IO server ready at http://localhost:${PORT}`);
-  console.log(`📡 Accepting connections from ${CORS_ORIGIN}`);
-  console.log(`🔹 WebRTC signaling enabled`);
-  console.log(`🟢 Server is stable and ready\n`);
+httpServer.listen(PORT, "0.0.0.0", (): void => {
+  console.log("\n" + "=".repeat(50));
+  console.log("🚀 Socket.IO Server Started Successfully");
+  console.log("=".repeat(50));
+  console.log(`📡 Server URL: http://localhost:${PORT}`);
+  console.log(`🌐 Network URL: http://0.0.0.0:${PORT}`);
+  console.log(`🔹 WebRTC signaling: ✅ Enabled`);
+  console.log(`🔹 CORS: ✅ Configured for local network`);
+  console.log(`🔹 Environment: ${process.env.NODE_ENV || "development"}`);
+  console.log("=".repeat(50) + "\n");
+  console.log("📱 Mobile testing:");
+  console.log("   1. Find your computer's IP: ipconfig (Windows) or ifconfig (Mac/Linux)");
+  console.log("   2. Use http://YOUR_IP:3000 on mobile");
+  console.log("   3. Ensure both devices are on the same WiFi network\n");
 });

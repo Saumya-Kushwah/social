@@ -10,6 +10,7 @@ import { syncUser, getUserByClerkId } from "@/actions/user.action";
 import SocketProvider from "@/components/SocketProvider";
 import CallProvider from "@/components/CallProvider";
 import { currentUser } from "@clerk/nextjs/server";
+import type { ChatUser } from "@/types/chat.types";
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -34,11 +35,22 @@ export default async function RootLayout({
 }>) {
   const clerkUser = await currentUser();
   let dbUserId: string | null = null;
+  let currentUserData: ChatUser | null = null; // ✅ ADDED
 
   if (clerkUser) {
     await syncUser();
     const dbUser = await getUserByClerkId(clerkUser.id);
     dbUserId = dbUser?.id || null;
+    
+    // ✅ ADDED: Create current user data for CallProvider
+    if (dbUser) {
+      currentUserData = {
+        id: dbUser.id,
+        username: dbUser.username,
+        name: dbUser.name,
+        image: dbUser.image,
+      };
+    }
   }
 
   return (
@@ -52,7 +64,8 @@ export default async function RootLayout({
             disableTransitionOnChange
           >
             <SocketProvider userId={dbUserId}>
-              <CallProvider currentUserId={dbUserId}>
+              {/* ✅ FIXED: Pass currentUser to CallProvider */}
+              <CallProvider currentUserId={dbUserId} currentUser={currentUserData}>
                 <div className="min-h-screen">
                   <Navbar />
 

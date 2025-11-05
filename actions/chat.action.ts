@@ -33,14 +33,21 @@ export async function getOrCreateConversation(otherUserId: string) {
       throw new Error("You can only chat with mutual followers");
     }
 
-    // Find existing conversation
+    // ✅ FIXED: Find existing conversation between exactly these two users
     const existingConversation = await prisma.conversation.findFirst({
       where: {
-        participants: {
-          every: {
-            userId: { in: [userId, otherUserId] },
+        AND: [
+          {
+            participants: {
+              some: { userId: userId }
+            }
           },
-        },
+          {
+            participants: {
+              some: { userId: otherUserId }
+            }
+          }
+        ]
       },
       include: {
         participants: {
@@ -58,8 +65,14 @@ export async function getOrCreateConversation(otherUserId: string) {
       },
     });
 
+    // Additional verification: ensure conversation has exactly 2 participants
     if (existingConversation) {
-      return { conversationId: existingConversation.id };
+      const participantIds = existingConversation.participants.map(p => p.userId);
+      if (participantIds.length === 2 && 
+          participantIds.includes(userId) && 
+          participantIds.includes(otherUserId)) {
+        return { conversationId: existingConversation.id };
+      }
     }
 
     // Create new conversation
