@@ -5,11 +5,10 @@
   "scripts": {
     "dev": "next dev",
     "socket": "tsx watch socket-server.ts",
-    "dev:all": "concurrently \"npm run dev\" \"npm run socket\" --names \"Next,Socket\" --prefix-colors \"cyan,magenta\"",
-    "build": "next build",
+    "dev:all": "concurrently \"npm run dev\" \"npm run socket\"",
+    "build": "prisma generate && next build",
     "start": "next start",
-    "start:socket": "NODE_ENV=production tsx socket-server.ts",
-    "start:all": "concurrently \"npm run start\" \"npm run start:socket\" --names \"Next,Socket\" --prefix-colors \"cyan,magenta\"",
+    "start:socket": "NODE_ENV=production node --loader tsx socket-server.ts",
     "lint": "eslint",
     "postinstall": "prisma generate"
   },

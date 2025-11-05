@@ -1,0 +1,14 @@
+{
+  "name": "socially-socket-server",
+  "version": "1.0.0",
+  "description": "Socket.IO server for Socially app",
+  "main": "socket-server.ts",
+  "scripts": {
+    "start": "NODE_ENV=production tsx socket-server.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.17.0",
+    "socket.io": "^4.8.1",
+    "tsx": "^4.20.6"
+  }
+}

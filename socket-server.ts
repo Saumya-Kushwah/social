@@ -4,20 +4,44 @@ import { Server, Socket } from "socket.io";
 import prisma from "./lib/prisma";
 import type { ServerToClientEvents, ClientToServerEvents } from "./types/chat.types";
 
-const PORT: number = parseInt(process.env.SOCKET_PORT || "3001", 10);
+const PORT: number = parseInt(process.env.PORT || process.env.SOCKET_PORT || "3001", 10);
 
-// ✅ IMPROVED: Support multiple origins for mobile testing
+// // ✅ IMPROVED: Support multiple origins for mobile testing
+// const getAllowedOrigins = (): (string | RegExp)[] => {
+//   const origins: (string | RegExp)[] = [
+//     "http://localhost:3000",
+//     "http://localhost:3001",
+//     process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+//     /^http:\/\/192\.168\.\d{1,3}\.\d{1,3}:3000$/, // Local network (192.168.x.x)
+//     /^http:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}:3000$/, // Alternative local network
+//     /^http:\/\/172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}:3000$/, // Docker network
+//   ];
+
+//   // Add custom origins from environment
+//   if (process.env.ALLOWED_ORIGINS) {
+//     const customOrigins = process.env.ALLOWED_ORIGINS.split(",");
+//     origins.push(...customOrigins);
+//   }
+
+//   return origins;
+// };
+
 const getAllowedOrigins = (): (string | RegExp)[] => {
   const origins: (string | RegExp)[] = [
-    "http://localhost:3000",
-    "http://localhost:3001",
     process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
-    /^http:\/\/192\.168\.\d{1,3}\.\d{1,3}:3000$/, // Local network (192.168.x.x)
-    /^http:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}:3000$/, // Alternative local network
-    /^http:\/\/172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}:3000$/, // Docker network
+    // Add production URL
+    /^https:\/\/.*\.vercel\.app$/,
+    /^https:\/\/.*\.render\.com$/,
   ];
 
-  // Add custom origins from environment
+  if (process.env.NODE_ENV === "development") {
+    origins.push(
+      "http://localhost:3000",
+      /^http:\/\/192\.168\.\d{1,3}\.\d{1,3}:3000$/,
+      /^http:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}:3000$/,
+    );
+  }
+
   if (process.env.ALLOWED_ORIGINS) {
     const customOrigins = process.env.ALLOWED_ORIGINS.split(",");
     origins.push(...customOrigins);
