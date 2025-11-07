@@ -1,4 +1,3 @@
-export const dynamic = 'force-dynamic';
 "use client";
 
 import { getNotifications, markNotificationsAsRead } from "@/actions/notification.action";
@@ -104,6 +103,8 @@ function NotificationsPage() {
                               <Image
                                 src={notification.post.image}
                                 alt="Post content"
+                                width={200}
+                                height={200}
                                 className="mt-2 rounded-md w-full max-w-[200px] h-auto object-cover"
                               />
                             )}
