@@ -1,29 +1,27 @@
-// app/api/conversations/[id]/messages/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import prisma from "@/lib/prisma";
 import { getUserByClerkId } from "@/actions/user.action";
 
-export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+interface RouteContext {
+  params: { id: string };
+}
+
+export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const { userId: clerkId } = await auth();
-    
+
     if (!clerkId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Get database user ID
     const user = await getUserByClerkId(clerkId);
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    const conversationId = params.id;
+    const conversationId = context.params.id;
 
-    // Verify user is part of the conversation
     const conversation = await prisma.conversation.findFirst({
       where: {
         id: conversationId,
@@ -43,22 +41,13 @@ export async function GET(
     }
 
     const messages = await prisma.message.findMany({
-      where: {
-        conversationId,
-      },
+      where: { conversationId },
       include: {
         sender: {
-          select: {
-            id: true,
-            username: true,
-            name: true,
-            image: true,
-          },
+          select: { id: true, username: true, name: true, image: true },
         },
       },
-      orderBy: {
-        createdAt: "asc",
-      },
+      orderBy: { createdAt: "asc" },
     });
 
     return NextResponse.json(messages);
