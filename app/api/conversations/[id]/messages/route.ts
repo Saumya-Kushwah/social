@@ -1,18 +1,24 @@
 // app/api/conversations/[id]/messages/route.ts
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { auth } from "@clerk/nextjs/server";
 import prisma from "@/lib/prisma";
+import { getUserByClerkId } from "@/actions/user.action";
 
 export async function GET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const { userId: clerkId } = await auth();
     
-    if (!session?.user?.id) {
+    if (!clerkId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get database user ID
+    const user = await getUserByClerkId(clerkId);
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
     const conversationId = params.id;
@@ -23,7 +29,7 @@ export async function GET(
         id: conversationId,
         participants: {
           some: {
-            userId: session.user.id,
+            userId: user.id,
           },
         },
       },
