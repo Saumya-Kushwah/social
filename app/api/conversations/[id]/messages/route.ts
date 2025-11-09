@@ -4,7 +4,7 @@ import prisma from "@/lib/prisma";
 import { getUserByClerkId } from "@/actions/user.action";
 
 interface RouteContext {
-  params: { id: string };
+  params: Promise<{ id: string }>; 
 }
 
 export async function GET(request: NextRequest, context: RouteContext) {
@@ -20,7 +20,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    const conversationId = context.params.id;
+    const params = await context.params;
+    const conversationId = params.id;
 
     const conversation = await prisma.conversation.findFirst({
       where: {
