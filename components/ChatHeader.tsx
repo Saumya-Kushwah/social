@@ -3,11 +3,11 @@
 import { ChevronLeft, Phone, Video } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { User } from '@prisma/client';
-import { useCall } from './CallProvider'; // Import the useCall hook
+import { useCall } from './CallProvider';
+import type { ChatUser } from '@/types/chat.types'; // ✅ Use ChatUser type instead
 
 interface ChatHeaderProps {
-  otherUser: User;
+  otherUser: ChatUser; // ✅ Changed from User to ChatUser
   onBack: () => void;
 }
 
