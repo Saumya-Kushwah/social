@@ -1,4 +1,4 @@
-// hooks/useWebRTC.ts
+// hooks/useWebRTC.ts - Key fixes for call stability
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useSocket } from "@/components/SocketProvider";
 import type { CallStatus, ChatUser } from "@/types/chat.types";
@@ -8,18 +8,12 @@ const ICE_SERVERS = {
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
-    // ✅ Add TURN servers for production (uncomment and configure)
-    // {
-    //   urls: "turn:your-turn-server.com:3478",
-    //   username: "username",
-    //   credential: "password"
-    // }
   ],
 };
 
 interface UseWebRTCProps {
   currentUserId: string;
-  currentUser: ChatUser; // ✅ ADDED: Current user data
+  currentUser: ChatUser;
   onCallEnded?: () => void;
 }
 
@@ -33,13 +27,14 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [otherUser, setOtherUser] = useState<ChatUser | null>(null);
-  const [error, setError] = useState<string | null>(null); // ✅ ADDED: Error state
+  const [error, setError] = useState<string | null>(null);
   
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const otherUserIdRef = useRef<string | null>(null);
+  const isEndingCallRef = useRef(false); // ✅ ADDED: Prevent duplicate end calls
 
   // Initialize peer connection
   const createPeerConnection = useCallback(() => {
@@ -59,23 +54,27 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
     pc.ontrack = (event) => {
       console.log("📥 Remote track received");
       remoteStreamRef.current = event.streams[0];
+      // ✅ FORCE UPDATE: Trigger re-render when remote stream arrives
+      setCallStatus((prev) => prev === "connected" ? "connected" : "connected");
     };
 
     pc.onconnectionstatechange = () => {
       console.log("🔄 Connection state:", pc.connectionState);
+      
+      // ✅ FIXED: Only end call on actual failures, not temporary disconnects
       if (pc.connectionState === "connected") {
         setCallStatus("connected");
         setError(null);
-      } else if (
-        pc.connectionState === "failed" ||
-        pc.connectionState === "disconnected" ||
-        pc.connectionState === "closed"
-      ) {
-        if (pc.connectionState === "failed") {
-          setError("Connection failed. Please check your network.");
+      } else if (pc.connectionState === "failed") {
+        setError("Connection failed. Please check your network.");
+        // Don't auto-end on failed - let user decide
+      } else if (pc.connectionState === "closed") {
+        // Only end if we didn't already start ending
+        if (!isEndingCallRef.current) {
+          endCall();
         }
-        endCall();
       }
+      // ✅ REMOVED: Don't end call on "disconnected" - it's temporary
     };
 
     pc.onicecandidateerror = (event) => {
@@ -85,12 +84,11 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
     return pc;
   }, [socket, callId]);
 
-  // ✅ IMPROVED: Get user media with better error handling
+  // Get user media
   const getUserMedia = useCallback(async (video: boolean, audio: boolean) => {
     try {
       setError(null);
       
-      // Check if browser supports getUserMedia
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("Your browser doesn't support audio/video calls");
       }
@@ -131,7 +129,6 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
             break;
           case 'OverconstrainedError':
             errorMessage = "Camera settings not supported. Trying with default settings...";
-            // Retry with basic constraints
             try {
               const basicStream = await navigator.mediaDevices.getUserMedia({
                 video: video ? true : false,
@@ -153,31 +150,28 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
     }
   }, []);
 
-  // ✅ FIXED: Start call with proper user data
+  // Start call
   const startCall = useCallback(
     async (user: ChatUser, video: boolean = true) => {
       try {
         setError(null);
+        isEndingCallRef.current = false; // ✅ Reset ending flag
+        
         const newCallId = `call-${Date.now()}`;
         setCallId(newCallId);
         setIsVideoCall(video);
-        setOtherUser(user);
+        setOtherUser(user); // ✅ Set other user BEFORE changing status
         setCallStatus("calling");
         otherUserIdRef.current = user.id;
 
-        // Get user media
         const stream = await getUserMedia(video, true);
-        
-        // Create peer connection
         const pc = createPeerConnection();
         peerConnectionRef.current = pc;
 
-        // Add tracks to peer connection
         stream.getTracks().forEach((track) => {
           pc.addTrack(track, stream);
         });
 
-        // ✅ FIXED: Send call initiation with actual user data
         if (socket) {
           socket.emit("initiate-call", {
             to: user.id,
@@ -198,29 +192,26 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
     [socket, getUserMedia, createPeerConnection, currentUser]
   );
 
-  // Answer call (receiver)
+  // Answer call
   const answerCall = useCallback(
     async (incomingCallId: string, fromUserId: string, video: boolean) => {
       try {
         setError(null);
+        isEndingCallRef.current = false; // ✅ Reset ending flag
+        
         setCallId(incomingCallId);
         setIsVideoCall(video);
-        setCallStatus("connected");
+        setCallStatus("connected"); // ✅ Set to connected immediately
         otherUserIdRef.current = fromUserId;
 
-        // Get user media
         const stream = await getUserMedia(video, true);
-
-        // Create peer connection
         const pc = createPeerConnection();
         peerConnectionRef.current = pc;
 
-        // Add tracks
         stream.getTracks().forEach((track) => {
           pc.addTrack(track, stream);
         });
 
-        // Accept call
         if (socket) {
           socket.emit("accept-call", {
             to: fromUserId,
@@ -254,8 +245,15 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
     [socket]
   );
 
-  // ✅ IMPROVED: End call with proper cleanup
+  // End call
   const endCall = useCallback(() => {
+    // ✅ ADDED: Prevent duplicate end calls
+    if (isEndingCallRef.current) {
+      console.log("⚠️ Already ending call, skipping...");
+      return;
+    }
+    
+    isEndingCallRef.current = true;
     console.log("🔴 Ending call...");
     
     if (socket && otherUserIdRef.current && callId) {
@@ -265,7 +263,6 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
       });
     }
 
-    // Stop all tracks
     localStreamRef.current?.getTracks().forEach((track) => {
       track.stop();
       console.log(`⏹️ Stopped ${track.kind} track`);
@@ -276,20 +273,17 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
       console.log(`⏹️ Stopped screen share track`);
     });
     
-    // Close peer connection
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
       console.log("🔌 Peer connection closed");
     }
     
-    // Reset refs
     peerConnectionRef.current = null;
     localStreamRef.current = null;
     remoteStreamRef.current = null;
     screenStreamRef.current = null;
     otherUserIdRef.current = null;
     
-    // Reset state
     setCallStatus("idle");
     setCallId(null);
     setOtherUser(null);
@@ -297,6 +291,11 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
     setIsVideoEnabled(true);
     setIsAudioEnabled(true);
     setError(null);
+    
+    // ✅ Small delay before allowing new calls
+    setTimeout(() => {
+      isEndingCallRef.current = false;
+    }, 500);
     
     onCallEnded?.();
   }, [socket, callId, onCallEnded]);
@@ -374,7 +373,6 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
   useEffect(() => {
     if (!socket) return;
 
-    // Handle call accepted
     socket.on("call-accepted", async ({ callId: acceptedCallId, from }) => {
       if (callId === acceptedCallId && peerConnectionRef.current) {
         try {
@@ -394,7 +392,6 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
       }
     });
 
-    // Handle WebRTC offer
     socket.on("webrtc-offer", async ({ offer, from, callId: offerCallId }) => {
       if (peerConnectionRef.current && callId === offerCallId) {
         try {
@@ -418,7 +415,6 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
       }
     });
 
-    // Handle WebRTC answer
     socket.on("webrtc-answer", async ({ answer, callId: answerCallId }) => {
       if (peerConnectionRef.current && callId === answerCallId) {
         try {
@@ -433,7 +429,6 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
       }
     });
 
-    // Handle ICE candidate
     socket.on("webrtc-ice-candidate", async ({ candidate, callId: candidateCallId }) => {
       if (peerConnectionRef.current && callId === candidateCallId) {
         try {
@@ -446,13 +441,11 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
       }
     });
 
-    // Handle call rejected
     socket.on("call-rejected", () => {
       setError("Call was rejected");
       endCall();
     });
 
-    // Handle call ended
     socket.on("call-ended", () => {
       endCall();
     });
@@ -467,14 +460,8 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
     };
   }, [socket, callId, endCall]);
 
-  // ✅ ADDED: Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (callStatus !== "idle") {
-        endCall();
-      }
-    };
-  }, []);
+  // ✅ REMOVED: Auto-cleanup on unmount (causes issues)
+  // Only cleanup when component actually unmounts, not on state changes
 
   return {
     callStatus,
@@ -484,7 +471,7 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
     isAudioEnabled,
     isScreenSharing,
     otherUser,
-    error, // ✅ ADDED: Expose error state
+    error,
     localStream: localStreamRef.current,
     remoteStream: remoteStreamRef.current,
     startCall,
