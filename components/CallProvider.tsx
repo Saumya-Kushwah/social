@@ -1,6 +1,13 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, ReactNode, useRef } from "react";
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+  useRef,
+} from "react";
 import { useSocket } from "./SocketProvider";
 import { useWebRTC } from "@/hooks/useWebRTC";
 import VideoCallUI from "./VideoCallUI";
@@ -28,14 +35,16 @@ interface CallProviderProps {
   currentUser: ChatUser | null;
 }
 
-export default function CallProvider({ 
-  children, 
+export default function CallProvider({
+  children,
   currentUserId,
-  currentUser 
+  currentUser,
 }: CallProviderProps) {
   const { socket } = useSocket();
-  const [incomingCall, setIncomingCall] = useState<CallInitiatedData | null>(null);
-  const incomingCallRef = useRef<CallInitiatedData | null>(null); // ✅ ADDED: Prevent duplicate modals
+  const [incomingCall, setIncomingCall] = useState<CallInitiatedData | null>(
+    null
+  );
+  const incomingCallRef = useRef<CallInitiatedData | null>(null);
 
   const webrtc = useWebRTC({
     currentUserId: currentUserId || "",
@@ -47,7 +56,7 @@ export default function CallProvider({
     },
     onCallEnded: () => {
       setIncomingCall(null);
-      incomingCallRef.current = null; // ✅ ADDED: Clear ref
+      incomingCallRef.current = null;
     },
   });
 
@@ -57,20 +66,17 @@ export default function CallProvider({
 
     const handleCallInitiated = (data: CallInitiatedData) => {
       console.log("📞 Incoming call from:", data.callerName);
-      
-      // ✅ ADDED: Prevent duplicate incoming call modals
+
       if (incomingCallRef.current?.callId === data.callId) {
         console.log("⚠️ Duplicate call notification, ignoring...");
         return;
       }
-      
-      // Only show incoming call if not already in a call
+
       if (webrtc.callStatus === "idle") {
         incomingCallRef.current = data;
         setIncomingCall(data);
       } else {
         console.log("⚠️ Already in a call, auto-rejecting...");
-        // If already in call, automatically reject
         socket.emit("reject-call", {
           to: data.from,
           callId: data.callId,
@@ -85,7 +91,7 @@ export default function CallProvider({
     };
   }, [socket, webrtc.callStatus]);
 
-  // ✅ ADDED: Handle socket disconnect during call
+  // Handle socket disconnect during call
   useEffect(() => {
     if (!socket) return;
 
@@ -104,14 +110,12 @@ export default function CallProvider({
   }, [socket, webrtc.callStatus, webrtc.endCall]);
 
   const startVoiceCall = (user: ChatUser) => {
-    // ✅ ADDED: Clear any incoming call state before starting new call
     setIncomingCall(null);
     incomingCallRef.current = null;
     webrtc.startCall(user, false);
   };
 
   const startVideoCall = (user: ChatUser) => {
-    // ✅ ADDED: Clear any incoming call state before starting new call
     setIncomingCall(null);
     incomingCallRef.current = null;
     webrtc.startCall(user, true);
@@ -119,22 +123,23 @@ export default function CallProvider({
 
   const handleAcceptCall = () => {
     if (incomingCall) {
-      // ✅ ADDED: Get other user info from the call data
       const otherUser: ChatUser = {
         id: incomingCall.from,
         username: incomingCall.callerName,
         name: incomingCall.callerName,
         image: incomingCall.callerImage,
       };
-      
-      webrtc.answerCall(incomingCall.callId, incomingCall.from, incomingCall.isVideoCall);
-      
-      // ✅ IMPORTANT: Keep the otherUser info
-      if (!webrtc.otherUser) {
-        // Manually set it since answerCall might not have it yet
-        webrtc.otherUser = otherUser;
-      }
-      
+
+      // ✅ FIX: Pass the full otherUser object to answerCall
+      webrtc.answerCall(
+        incomingCall.callId,
+        otherUser,
+        incomingCall.isVideoCall
+      );
+
+      // ❌ FIX: Removed the incorrect manual state mutation
+      // (webrtc.otherUser = otherUser;)
+
       setIncomingCall(null);
       incomingCallRef.current = null;
     }

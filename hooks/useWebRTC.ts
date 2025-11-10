@@ -1,4 +1,4 @@
-// hooks/useWebRTC.ts - Key fixes for call stability
+// hooks/useWebRTC.ts
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useSocket } from "@/components/SocketProvider";
 import type { CallStatus, ChatUser } from "@/types/chat.types";
@@ -17,9 +17,13 @@ interface UseWebRTCProps {
   onCallEnded?: () => void;
 }
 
-export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTCProps) {
+export function useWebRTC({
+  currentUserId,
+  currentUser,
+  onCallEnded,
+}: UseWebRTCProps) {
   const { socket } = useSocket();
-  
+
   const [callStatus, setCallStatus] = useState<CallStatus>("idle");
   const [callId, setCallId] = useState<string | null>(null);
   const [isVideoCall, setIsVideoCall] = useState(false);
@@ -28,13 +32,15 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [otherUser, setOtherUser] = useState<ChatUser | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
+
+  // ✅ FIX: Use useState for streams to trigger re-renders
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const remoteStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const otherUserIdRef = useRef<string | null>(null);
-  const isEndingCallRef = useRef(false); // ✅ ADDED: Prevent duplicate end calls
+  const isEndingCallRef = useRef(false);
 
   // Initialize peer connection
   const createPeerConnection = useCallback(() => {
@@ -53,28 +59,23 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
 
     pc.ontrack = (event) => {
       console.log("📥 Remote track received");
-      remoteStreamRef.current = event.streams[0];
-      // ✅ FORCE UPDATE: Trigger re-render when remote stream arrives
-      setCallStatus((prev) => prev === "connected" ? "connected" : "connected");
+      // ✅ FIX: Set remote stream using state
+      setRemoteStream(event.streams[0]);
     };
 
     pc.onconnectionstatechange = () => {
       console.log("🔄 Connection state:", pc.connectionState);
-      
-      // ✅ FIXED: Only end call on actual failures, not temporary disconnects
+
       if (pc.connectionState === "connected") {
         setCallStatus("connected");
         setError(null);
       } else if (pc.connectionState === "failed") {
         setError("Connection failed. Please check your network.");
-        // Don't auto-end on failed - let user decide
       } else if (pc.connectionState === "closed") {
-        // Only end if we didn't already start ending
         if (!isEndingCallRef.current) {
           endCall();
         }
       }
-      // ✅ REMOVED: Don't end call on "disconnected" - it's temporary
     };
 
     pc.onicecandidateerror = (event) => {
@@ -82,59 +83,67 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
     };
 
     return pc;
-  }, [socket, callId]);
+  }, [socket, callId]); // `endCall` is defined later, will be wrapped in useCallback
 
   // Get user media
   const getUserMedia = useCallback(async (video: boolean, audio: boolean) => {
     try {
       setError(null);
-      
+
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("Your browser doesn't support audio/video calls");
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: video ? { 
-          width: { ideal: 1280 }, 
-          height: { ideal: 720 },
-          facingMode: "user"
-        } : false,
+        video: video
+          ? {
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              facingMode: "user",
+            }
+          : false,
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
         },
       });
-      
-      localStreamRef.current = stream;
+
+      // ✅ FIX: Set local stream using state
+      setLocalStream(stream);
       return stream;
     } catch (error) {
       console.error("Error getting user media:", error);
-      
+
       let errorMessage = "Failed to access camera/microphone";
-      
+
       if (error instanceof DOMException) {
         switch (error.name) {
-          case 'NotAllowedError':
-          case 'PermissionDeniedError':
-            errorMessage = "Camera/microphone permission denied. Please allow access in your browser settings.";
+          case "NotAllowedError":
+          case "PermissionDeniedError":
+            errorMessage =
+              "Camera/microphone permission denied. Please allow access in your browser settings.";
             break;
-          case 'NotFoundError':
-          case 'DevicesNotFoundError':
-            errorMessage = "No camera or microphone found. Please connect a device.";
+          case "NotFoundError":
+          case "DevicesNotFoundError":
+            errorMessage =
+              "No camera or microphone found. Please connect a device.";
             break;
-          case 'NotReadableError':
-          case 'TrackStartError':
-            errorMessage = "Camera/microphone is already in use by another application.";
+          case "NotReadableError":
+          case "TrackStartError":
+            errorMessage =
+              "Camera/microphone is already in use by another application.";
             break;
-          case 'OverconstrainedError':
-            errorMessage = "Camera settings not supported. Trying with default settings...";
+          case "OverconstrainedError":
+            errorMessage =
+              "Camera settings not supported. Trying with default settings...";
             try {
               const basicStream = await navigator.mediaDevices.getUserMedia({
                 video: video ? true : false,
                 audio: true,
               });
-              localStreamRef.current = basicStream;
+              // ✅ FIX: Set local stream using state
+              setLocalStream(basicStream);
               return basicStream;
             } catch {
               errorMessage = "Failed to access camera with any settings.";
@@ -144,23 +153,41 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
             errorMessage = `Media error: ${error.message}`;
         }
       }
-      
+
       setError(errorMessage);
       throw new Error(errorMessage);
     }
   }, []);
+
+  // Reject call
+  const rejectCall = useCallback(
+    (incomingCallId: string, fromUserId: string) => {
+      if (socket) {
+        socket.emit("reject-call", {
+          to: fromUserId,
+          callId: incomingCallId,
+        });
+        console.log("❌ Call rejected");
+      }
+      setCallStatus("idle");
+      setCallId(null);
+      setOtherUser(null);
+      setError(null);
+    },
+    [socket]
+  );
 
   // Start call
   const startCall = useCallback(
     async (user: ChatUser, video: boolean = true) => {
       try {
         setError(null);
-        isEndingCallRef.current = false; // ✅ Reset ending flag
-        
+        isEndingCallRef.current = false;
+
         const newCallId = `call-${Date.now()}`;
         setCallId(newCallId);
         setIsVideoCall(video);
-        setOtherUser(user); // ✅ Set other user BEFORE changing status
+        setOtherUser(user);
         setCallStatus("calling");
         otherUserIdRef.current = user.id;
 
@@ -194,15 +221,21 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
 
   // Answer call
   const answerCall = useCallback(
-    async (incomingCallId: string, fromUserId: string, video: boolean) => {
+    async (
+      incomingCallId: string,
+      fromUser: ChatUser, // ✅ FIX: Accept the full ChatUser object
+      video: boolean
+    ) => {
       try {
         setError(null);
-        isEndingCallRef.current = false; // ✅ Reset ending flag
-        
+        isEndingCallRef.current = false;
+
         setCallId(incomingCallId);
         setIsVideoCall(video);
-        setCallStatus("connected"); // ✅ Set to connected immediately
-        otherUserIdRef.current = fromUserId;
+        // ✅ FIX: Set the other user in state
+        setOtherUser(fromUser);
+        setCallStatus("connected");
+        otherUserIdRef.current = fromUser.id;
 
         const stream = await getUserMedia(video, true);
         const pc = createPeerConnection();
@@ -214,48 +247,29 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
 
         if (socket) {
           socket.emit("accept-call", {
-            to: fromUserId,
+            to: fromUser.id,
             callId: incomingCallId,
           });
           console.log("✅ Call accepted");
         }
       } catch (error) {
         console.error("Error answering call:", error);
-        rejectCall(incomingCallId, fromUserId);
+        rejectCall(incomingCallId, fromUser.id);
       }
     },
-    [socket, getUserMedia, createPeerConnection]
-  );
-
-  // Reject call
-  const rejectCall = useCallback(
-    (incomingCallId: string, fromUserId: string) => {
-      if (socket) {
-        socket.emit("reject-call", {
-          to: fromUserId,
-          callId: incomingCallId,
-        });
-        console.log("❌ Call rejected");
-      }
-      setCallStatus("idle");
-      setCallId(null);
-      setOtherUser(null);
-      setError(null);
-    },
-    [socket]
+    [socket, getUserMedia, createPeerConnection, rejectCall] // ✅ FIX: Add rejectCall dependency
   );
 
   // End call
   const endCall = useCallback(() => {
-    // ✅ ADDED: Prevent duplicate end calls
     if (isEndingCallRef.current) {
       console.log("⚠️ Already ending call, skipping...");
       return;
     }
-    
+
     isEndingCallRef.current = true;
     console.log("🔴 Ending call...");
-    
+
     if (socket && otherUserIdRef.current && callId) {
       socket.emit("end-call", {
         to: otherUserIdRef.current,
@@ -263,27 +277,30 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
       });
     }
 
-    localStreamRef.current?.getTracks().forEach((track) => {
+    // ✅ FIX: Stop tracks from state stream
+    localStream?.getTracks().forEach((track) => {
       track.stop();
       console.log(`⏹️ Stopped ${track.kind} track`);
     });
-    
+
     screenStreamRef.current?.getTracks().forEach((track) => {
       track.stop();
       console.log(`⏹️ Stopped screen share track`);
     });
-    
+
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
       console.log("🔌 Peer connection closed");
     }
-    
+
     peerConnectionRef.current = null;
-    localStreamRef.current = null;
-    remoteStreamRef.current = null;
     screenStreamRef.current = null;
     otherUserIdRef.current = null;
-    
+
+    // ✅ FIX: Clear stream state
+    setLocalStream(null);
+    setRemoteStream(null);
+
     setCallStatus("idle");
     setCallId(null);
     setOtherUser(null);
@@ -291,38 +308,39 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
     setIsVideoEnabled(true);
     setIsAudioEnabled(true);
     setError(null);
-    
-    // ✅ Small delay before allowing new calls
+
     setTimeout(() => {
       isEndingCallRef.current = false;
     }, 500);
-    
+
     onCallEnded?.();
-  }, [socket, callId, onCallEnded]);
+  }, [socket, callId, onCallEnded, localStream]); // ✅ FIX: Add localStream dependency
 
   // Toggle video
   const toggleVideo = useCallback(() => {
-    if (localStreamRef.current) {
-      const videoTrack = localStreamRef.current.getVideoTracks()[0];
+    // ✅ FIX: Use localStream from state
+    if (localStream) {
+      const videoTrack = localStream.getVideoTracks()[0];
       if (videoTrack) {
         videoTrack.enabled = !videoTrack.enabled;
         setIsVideoEnabled(videoTrack.enabled);
-        console.log(`📹 Video ${videoTrack.enabled ? 'enabled' : 'disabled'}`);
+        console.log(`📹 Video ${videoTrack.enabled ? "enabled" : "disabled"}`);
       }
     }
-  }, []);
+  }, [localStream]); // ✅ FIX: Add localStream dependency
 
   // Toggle audio
   const toggleAudio = useCallback(() => {
-    if (localStreamRef.current) {
-      const audioTrack = localStreamRef.current.getAudioTracks()[0];
+    // ✅ FIX: Use localStream from state
+    if (localStream) {
+      const audioTrack = localStream.getAudioTracks()[0];
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         setIsAudioEnabled(audioTrack.enabled);
-        console.log(`🎤 Audio ${audioTrack.enabled ? 'enabled' : 'disabled'}`);
+        console.log(`🎤 Audio ${audioTrack.enabled ? "enabled" : "disabled"}`);
       }
     }
-  }, []);
+  }, [localStream]); // ✅ FIX: Add localStream dependency
 
   // Toggle screen share
   const toggleScreenShare = useCallback(async () => {
@@ -349,7 +367,8 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
         setIsScreenSharing(true);
         console.log("🖥️ Screen sharing started");
       } else {
-        const videoTrack = localStreamRef.current?.getVideoTracks()[0];
+        // ✅ FIX: Use localStream from state
+        const videoTrack = localStream?.getVideoTracks()[0];
         const sender = peerConnectionRef.current
           ?.getSenders()
           .find((s) => s.track?.kind === "video");
@@ -367,7 +386,7 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
       console.error("Error toggling screen share:", error);
       setError("Failed to share screen");
     }
-  }, [isScreenSharing]);
+  }, [isScreenSharing, localStream]); // ✅ FIX: Add localStream dependency
 
   // Handle Socket.IO events
   useEffect(() => {
@@ -429,17 +448,20 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
       }
     });
 
-    socket.on("webrtc-ice-candidate", async ({ candidate, callId: candidateCallId }) => {
-      if (peerConnectionRef.current && callId === candidateCallId) {
-        try {
-          await peerConnectionRef.current.addIceCandidate(
-            new RTCIceCandidate(candidate)
-          );
-        } catch (error) {
-          console.error("Error adding ICE candidate:", error);
+    socket.on(
+      "webrtc-ice-candidate",
+      async ({ candidate, callId: candidateCallId }) => {
+        if (peerConnectionRef.current && callId === candidateCallId) {
+          try {
+            await peerConnectionRef.current.addIceCandidate(
+              new RTCIceCandidate(candidate)
+            );
+          } catch (error) {
+            console.error("Error adding ICE candidate:", error);
+          }
         }
       }
-    });
+    );
 
     socket.on("call-rejected", () => {
       setError("Call was rejected");
@@ -460,9 +482,6 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
     };
   }, [socket, callId, endCall]);
 
-  // ✅ REMOVED: Auto-cleanup on unmount (causes issues)
-  // Only cleanup when component actually unmounts, not on state changes
-
   return {
     callStatus,
     callId,
@@ -472,8 +491,9 @@ export function useWebRTC({ currentUserId, currentUser, onCallEnded }: UseWebRTC
     isScreenSharing,
     otherUser,
     error,
-    localStream: localStreamRef.current,
-    remoteStream: remoteStreamRef.current,
+    // ✅ FIX: Return state variables
+    localStream,
+    remoteStream,
     startCall,
     answerCall,
     rejectCall,
