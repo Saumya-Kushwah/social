@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  X,
   Mic,
   MicOff,
   Video,
@@ -46,156 +45,170 @@ export default function VideoCallUI({
 }: VideoCallUIProps) {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const [remoteVideoReady, setRemoteVideoReady] = useState(false);
+  const [localVideoReady, setLocalVideoReady] = useState(false);
+  const remoteStreamAttachedRef = useRef(false);
+  const localStreamAttachedRef = useRef(false);
 
-  // Setup local video with better error handling
+  // Setup local video - ONLY ONCE per stream
   useEffect(() => {
     const videoElement = localVideoRef.current;
     
-    if (videoElement && localStream) {
-      console.log("🎬 Attaching local stream to video element");
-      console.log("Local stream tracks:", localStream.getTracks().map(t => `${t.kind}: ${t.enabled}`));
+    if (!videoElement || !localStream) {
+      return;
+    }
+
+    // Prevent re-attaching the same stream
+    if (localStreamAttachedRef.current && videoElement.srcObject === localStream) {
+      console.log("⏭️ Local stream already attached, skipping");
+      return;
+    }
+
+    console.log("🎬 Attaching local stream to video element");
+    localStreamAttachedRef.current = true;
+    
+    videoElement.srcObject = localStream;
+    videoElement.muted = true; // Critical: local must be muted
+    
+    videoElement.onloadedmetadata = () => {
+      console.log("✅ Local video metadata loaded:", {
+        width: videoElement.videoWidth,
+        height: videoElement.videoHeight,
+      });
+      setLocalVideoReady(true);
       
-      // Critical: Set srcObject directly
-      videoElement.srcObject = localStream;
-      
-      // Ensure video plays
+      // Play video after metadata loads
       videoElement.play().catch((err) => {
         console.error("❌ Error playing local video:", err);
       });
+    };
 
-      // Debug: Check if video is actually playing
-      videoElement.onloadedmetadata = () => {
-        console.log("✅ Local video metadata loaded", {
-          videoWidth: videoElement.videoWidth,
-          videoHeight: videoElement.videoHeight,
-          readyState: videoElement.readyState
-        });
-      };
-
-      videoElement.onplay = () => {
-        console.log("▶️ Local video started playing");
-      };
-    }
+    videoElement.onplay = () => {
+      console.log("▶️ Local video playing");
+    };
 
     return () => {
-      if (videoElement) {
-        console.log("🧹 Cleaning up local video");
-        videoElement.srcObject = null;
-      }
+      console.log("🧹 Cleaning up local video");
+      localStreamAttachedRef.current = false;
+      setLocalVideoReady(false);
     };
-  }, [localStream]);
+  }, [localStream]); // Only depend on localStream
 
-  // Setup remote video with better error handling
+  // Setup remote video - ONLY ONCE per stream
   useEffect(() => {
     const videoElement = remoteVideoRef.current;
     
-    if (videoElement && remoteStream) {
-      console.log("🎬 Attaching remote stream to video element");
-      console.log("Remote stream tracks:", remoteStream.getTracks().map(t => `${t.kind}: ${t.enabled} (readyState: ${t.readyState})`));
-      
-      // Critical: Set srcObject directly
-      videoElement.srcObject = remoteStream;
-      
-      // Ensure video plays
-      videoElement.play().catch((err) => {
-        console.error("❌ Error playing remote video:", err);
-        // Try again after a short delay
-        setTimeout(() => {
-          videoElement.play().catch(console.error);
-        }, 100);
-      });
-
-      // Debug: Check if video is actually playing
-      videoElement.onloadedmetadata = () => {
-        console.log("✅ Remote video metadata loaded", {
-          videoWidth: videoElement.videoWidth,
-          videoHeight: videoElement.videoHeight,
-          readyState: videoElement.readyState
-        });
-        
-        // Force play after metadata loads
-        if (videoElement.paused) {
-          videoElement.play().catch(console.error);
-        }
-      };
-
-      videoElement.onplay = () => {
-        console.log("▶️ Remote video started playing");
-      };
-
-      videoElement.onerror = (e) => {
-        console.error("❌ Remote video error:", e);
-      };
-
-      // Check if video has dimensions after a short delay
-      setTimeout(() => {
-        if (videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
-          console.error("⚠️ Remote video has no dimensions! Dimensions:", {
-            width: videoElement.videoWidth,
-            height: videoElement.videoHeight,
-            srcObject: videoElement.srcObject,
-            tracks: remoteStream.getTracks().map(t => ({
-              kind: t.kind,
-              enabled: t.enabled,
-              readyState: t.readyState,
-              muted: t.muted
-            }))
-          });
-        } else {
-          console.log("✅ Remote video rendering with dimensions:", {
-            width: videoElement.videoWidth,
-            height: videoElement.videoHeight
-          });
-        }
-      }, 1000);
-
-      // Additional debug for track state changes
-      remoteStream.getTracks().forEach(track => {
-        track.onended = () => {
-          console.warn(`⚠️ Remote ${track.kind} track ended`);
-        };
-        
-        track.onmute = () => {
-          console.warn(`🔇 Remote ${track.kind} track muted`);
-        };
-        
-        track.onunmute = () => {
-          console.log(`🔊 Remote ${track.kind} track unmuted`);
-        };
-      });
+    if (!videoElement || !remoteStream) {
+      return;
     }
 
-    return () => {
-      if (videoElement) {
-        console.log("🧹 Cleaning up remote video");
-        videoElement.srcObject = null;
-      }
+    // Prevent re-attaching the same stream
+    if (remoteStreamAttachedRef.current && videoElement.srcObject === remoteStream) {
+      console.log("⏭️ Remote stream already attached, skipping");
+      return;
+    }
+
+    console.log("🎬 Attaching remote stream to video element");
+    console.log("Remote stream tracks:", remoteStream.getTracks().map(t => 
+      `${t.kind}: ${t.enabled} (${t.readyState})`
+    ));
+    
+    remoteStreamAttachedRef.current = true;
+    
+    videoElement.srcObject = remoteStream;
+    videoElement.muted = false; // Remote should not be muted
+    
+    videoElement.onloadedmetadata = () => {
+      console.log("✅ Remote video metadata loaded:", {
+        width: videoElement.videoWidth,
+        height: videoElement.videoHeight,
+      });
+      setRemoteVideoReady(true);
+      
+      // Play video after metadata loads
+      videoElement.play().catch((err) => {
+        console.error("❌ Error playing remote video:", err);
+        // Retry after delay
+        setTimeout(() => {
+          videoElement.play().catch(console.error);
+        }, 500);
+      });
     };
-  }, [remoteStream]);
+
+    videoElement.onplay = () => {
+      console.log("▶️ Remote video playing");
+    };
+
+    videoElement.onerror = (e) => {
+      console.error("❌ Remote video error:", e);
+    };
+
+    // Monitor track states
+    remoteStream.getTracks().forEach(track => {
+      track.onended = () => {
+        console.warn(`⚠️ Remote ${track.kind} track ended`);
+      };
+      track.onmute = () => {
+        console.warn(`🔇 Remote ${track.kind} track muted`);
+      };
+      track.onunmute = () => {
+        console.log(`🔊 Remote ${track.kind} track unmuted`);
+      };
+    });
+
+    // Check video dimensions after a delay
+    const checkTimer = setTimeout(() => {
+      if (videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
+        console.error("⚠️ Remote video has no dimensions after 2s!");
+        console.error("Track states:", remoteStream.getTracks().map(t => ({
+          kind: t.kind,
+          enabled: t.enabled,
+          readyState: t.readyState,
+          muted: t.muted
+        })));
+      } else {
+        console.log("✅ Remote video rendering:", {
+          width: videoElement.videoWidth,
+          height: videoElement.videoHeight
+        });
+      }
+    }, 2000);
+
+    return () => {
+      console.log("🧹 Cleaning up remote video");
+      remoteStreamAttachedRef.current = false;
+      setRemoteVideoReady(false);
+      clearTimeout(checkTimer);
+    };
+  }, [remoteStream]); // Only depend on remoteStream
 
   return (
     <div className="fixed inset-0 z-50 bg-black flex flex-col">
       {/* Remote Video (Full Screen) */}
       <div className="flex-1 relative bg-gray-900">
         {remoteStream && callStatus === "connected" ? (
-          <>
+          <div className="relative w-full h-full">
             <video
               ref={remoteVideoRef}
               autoPlay
               playsInline
               className="w-full h-full object-cover"
               style={{ 
-                transform: 'scaleX(1)', // Don't mirror remote video
-                backgroundColor: '#1a1a1a' 
+                transform: 'scaleX(1)',
+                backgroundColor: '#1a1a1a',
               }}
             />
-            {/* Fallback overlay if video doesn't load */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="text-white/50 text-center" id="remote-video-fallback">
-                {/* This will be hidden by CSS once video plays */}
+            
+            {/* Show loading state if video not ready */}
+            {!remoteVideoReady && (
+              <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+                  <p className="text-white/70">Loading video...</p>
+                </div>
               </div>
-            </div>
-          </>
+            )}
+          </div>
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center">
             <Avatar className="w-32 h-32 mb-4">
@@ -213,7 +226,6 @@ export default function VideoCallUI({
               {callStatus === "connected" && "Connecting video..."}
             </p>
 
-            {/* Error display */}
             {error && (
               <div className="mt-4 flex items-center gap-2 bg-red-500/20 border border-red-500 rounded-lg px-4 py-2 max-w-md">
                 <AlertCircle className="w-5 h-5 text-red-400" />
@@ -224,27 +236,35 @@ export default function VideoCallUI({
         )}
 
         {/* Local Video (Picture-in-Picture) */}
-        {localStream && (
-          <div className="absolute top-4 right-4 w-48 h-36 bg-gray-900 rounded-lg overflow-hidden shadow-2xl border-2 border-white/20">
+        {localStream && callStatus !== "ended" && (
+          <div className="absolute top-4 right-4 w-48 h-36 bg-gray-900 rounded-lg overflow-hidden shadow-2xl border-2 border-white/20 z-10">
             {isVideoEnabled ? (
-              <video
-                ref={localVideoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover"
-                style={{ 
-                  transform: 'scaleX(-1)', // Mirror local video
-                  backgroundColor: '#1a1a1a'
-                }}
-              />
+              <div className="relative w-full h-full">
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                  style={{ 
+                    transform: 'scaleX(-1)',
+                    backgroundColor: '#1a1a1a'
+                  }}
+                />
+                
+                {/* Loading state for local video */}
+                {!localVideoReady && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></div>
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-gray-800">
                 <VideoOff className="w-8 h-8 text-white/50" />
               </div>
             )}
             
-            {/* Muted indicator */}
             {!isAudioEnabled && (
               <div className="absolute bottom-2 left-2 bg-red-500 rounded-full p-1">
                 <MicOff className="w-3 h-3 text-white" />
@@ -254,9 +274,9 @@ export default function VideoCallUI({
         )}
 
         {/* Call Info */}
-        <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm px-4 py-2 rounded-lg">
+        <div className="absolute top-4 left-4 bg-black/50 backdrop-blur-sm px-4 py-2 rounded-lg z-10">
           <p className="text-white text-sm flex items-center gap-2">
-            {callStatus === "connected" ? (
+            {callStatus === "connected" && remoteVideoReady ? (
               <>
                 <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
                 Connected
@@ -271,8 +291,8 @@ export default function VideoCallUI({
         </div>
 
         {/* Connection Status */}
-        {callStatus === "connected" && remoteStream && (
-          <div className="absolute top-16 left-4 bg-black/30 backdrop-blur-sm px-3 py-1 rounded-lg">
+        {callStatus === "connected" && (
+          <div className="absolute top-16 left-4 bg-black/30 backdrop-blur-sm px-3 py-1 rounded-lg z-10">
             <p className="text-white/80 text-xs flex items-center gap-2">
               {isScreenSharing ? (
                 <>
@@ -293,7 +313,6 @@ export default function VideoCallUI({
       {/* Controls */}
       <div className="p-6 bg-gradient-to-t from-black/90 to-transparent">
         <div className="flex items-center justify-center gap-4">
-          {/* Toggle Audio */}
           <Button
             onClick={onToggleAudio}
             size="lg"
@@ -308,7 +327,6 @@ export default function VideoCallUI({
             )}
           </Button>
 
-          {/* Toggle Video */}
           <Button
             onClick={onToggleVideo}
             size="lg"
@@ -323,7 +341,6 @@ export default function VideoCallUI({
             )}
           </Button>
 
-          {/* End Call */}
           <Button
             onClick={onEndCall}
             size="lg"
@@ -334,7 +351,6 @@ export default function VideoCallUI({
             <Phone className="w-6 h-6 transform rotate-[135deg]" />
           </Button>
 
-          {/* Screen Share */}
           <Button
             onClick={onToggleScreenShare}
             size="lg"
@@ -347,27 +363,29 @@ export default function VideoCallUI({
           </Button>
         </div>
 
-        {/* Hints */}
         <div className="mt-4 text-center">
           <p className="text-white/50 text-xs">
-            {callStatus === "connected"
+            {callStatus === "connected" && remoteVideoReady
               ? "Call is active"
               : "Establishing connection..."}
           </p>
         </div>
       </div>
 
-      {/* Debug overlay (remove in production) */}
+      {/* Debug overlay */}
       {process.env.NODE_ENV === 'development' && (
-        <div className="absolute bottom-20 left-4 bg-black/70 text-white text-xs p-2 rounded max-w-xs">
+        <div className="absolute bottom-24 left-4 bg-black/80 text-white text-xs p-3 rounded-lg max-w-xs font-mono z-20">
+          <div className="font-bold mb-2">Debug Info:</div>
           <div>Status: {callStatus}</div>
           <div>Local Stream: {localStream ? '✅' : '❌'}</div>
+          <div>Local Ready: {localVideoReady ? '✅' : '❌'}</div>
           <div>Remote Stream: {remoteStream ? '✅' : '❌'}</div>
+          <div>Remote Ready: {remoteVideoReady ? '✅' : '❌'}</div>
           <div>Video: {isVideoEnabled ? '✅' : '❌'}</div>
           <div>Audio: {isAudioEnabled ? '✅' : '❌'}</div>
           {remoteStream && (
-            <div>
-              Remote Tracks: {remoteStream.getTracks().map(t => 
+            <div className="mt-1">
+              Tracks: {remoteStream.getTracks().map(t => 
                 `${t.kind}(${t.readyState})`
               ).join(', ')}
             </div>
@@ -377,10 +395,3 @@ export default function VideoCallUI({
     </div>
   );
 }
-
-<style jsx global>{`
-  /* Hide the fallback text once video is playing */
-  video:not([src=""]) ~ #remote-video-fallback {
-    display: none;
-  }
-`}</style>
