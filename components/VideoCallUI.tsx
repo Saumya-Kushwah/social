@@ -112,11 +112,42 @@ export default function VideoCallUI({
           videoHeight: videoElement.videoHeight,
           readyState: videoElement.readyState
         });
+        
+        // Force play after metadata loads
+        if (videoElement.paused) {
+          videoElement.play().catch(console.error);
+        }
       };
 
       videoElement.onplay = () => {
         console.log("▶️ Remote video started playing");
       };
+
+      videoElement.onerror = (e) => {
+        console.error("❌ Remote video error:", e);
+      };
+
+      // Check if video has dimensions after a short delay
+      setTimeout(() => {
+        if (videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
+          console.error("⚠️ Remote video has no dimensions! Dimensions:", {
+            width: videoElement.videoWidth,
+            height: videoElement.videoHeight,
+            srcObject: videoElement.srcObject,
+            tracks: remoteStream.getTracks().map(t => ({
+              kind: t.kind,
+              enabled: t.enabled,
+              readyState: t.readyState,
+              muted: t.muted
+            }))
+          });
+        } else {
+          console.log("✅ Remote video rendering with dimensions:", {
+            width: videoElement.videoWidth,
+            height: videoElement.videoHeight
+          });
+        }
+      }, 1000);
 
       // Additional debug for track state changes
       remoteStream.getTracks().forEach(track => {
