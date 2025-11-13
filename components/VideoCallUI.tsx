@@ -47,26 +47,97 @@ export default function VideoCallUI({
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
 
-  // Setup local video
+  // Setup local video with better error handling
   useEffect(() => {
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
+    const videoElement = localVideoRef.current;
+    
+    if (videoElement && localStream) {
+      console.log("🎬 Attaching local stream to video element");
+      console.log("Local stream tracks:", localStream.getTracks().map(t => `${t.kind}: ${t.enabled}`));
+      
+      // Critical: Set srcObject directly
+      videoElement.srcObject = localStream;
+      
+      // Ensure video plays
+      videoElement.play().catch((err) => {
+        console.error("❌ Error playing local video:", err);
+      });
+
+      // Debug: Check if video is actually playing
+      videoElement.onloadedmetadata = () => {
+        console.log("✅ Local video metadata loaded", {
+          videoWidth: videoElement.videoWidth,
+          videoHeight: videoElement.videoHeight,
+          readyState: videoElement.readyState
+        });
+      };
+
+      videoElement.onplay = () => {
+        console.log("▶️ Local video started playing");
+      };
     }
+
     return () => {
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = null;
+      if (videoElement) {
+        console.log("🧹 Cleaning up local video");
+        videoElement.srcObject = null;
       }
     };
   }, [localStream]);
 
-  // Setup remote video
+  // Setup remote video with better error handling
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
+    const videoElement = remoteVideoRef.current;
+    
+    if (videoElement && remoteStream) {
+      console.log("🎬 Attaching remote stream to video element");
+      console.log("Remote stream tracks:", remoteStream.getTracks().map(t => `${t.kind}: ${t.enabled} (readyState: ${t.readyState})`));
+      
+      // Critical: Set srcObject directly
+      videoElement.srcObject = remoteStream;
+      
+      // Ensure video plays
+      videoElement.play().catch((err) => {
+        console.error("❌ Error playing remote video:", err);
+        // Try again after a short delay
+        setTimeout(() => {
+          videoElement.play().catch(console.error);
+        }, 100);
+      });
+
+      // Debug: Check if video is actually playing
+      videoElement.onloadedmetadata = () => {
+        console.log("✅ Remote video metadata loaded", {
+          videoWidth: videoElement.videoWidth,
+          videoHeight: videoElement.videoHeight,
+          readyState: videoElement.readyState
+        });
+      };
+
+      videoElement.onplay = () => {
+        console.log("▶️ Remote video started playing");
+      };
+
+      // Additional debug for track state changes
+      remoteStream.getTracks().forEach(track => {
+        track.onended = () => {
+          console.warn(`⚠️ Remote ${track.kind} track ended`);
+        };
+        
+        track.onmute = () => {
+          console.warn(`🔇 Remote ${track.kind} track muted`);
+        };
+        
+        track.onunmute = () => {
+          console.log(`🔊 Remote ${track.kind} track unmuted`);
+        };
+      });
     }
+
     return () => {
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = null;
+      if (videoElement) {
+        console.log("🧹 Cleaning up remote video");
+        videoElement.srcObject = null;
       }
     };
   }, [remoteStream]);
@@ -74,14 +145,26 @@ export default function VideoCallUI({
   return (
     <div className="fixed inset-0 z-50 bg-black flex flex-col">
       {/* Remote Video (Full Screen) */}
-      <div className="flex-1 relative">
+      <div className="flex-1 relative bg-gray-900">
         {remoteStream && callStatus === "connected" ? (
-          <video
-            ref={remoteVideoRef}
-            autoPlay
-            playsInline
-            className="w-full h-full object-cover"
-          />
+          <>
+            <video
+              ref={remoteVideoRef}
+              autoPlay
+              playsInline
+              className="w-full h-full object-cover"
+              style={{ 
+                transform: 'scaleX(1)', // Don't mirror remote video
+                backgroundColor: '#1a1a1a' 
+              }}
+            />
+            {/* Fallback overlay if video doesn't load */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="text-white/50 text-center" id="remote-video-fallback">
+                {/* This will be hidden by CSS once video plays */}
+              </div>
+            </div>
+          </>
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center">
             <Avatar className="w-32 h-32 mb-4">
@@ -96,7 +179,7 @@ export default function VideoCallUI({
             <p className="text-white/70">
               {callStatus === "calling" && "Calling..."}
               {callStatus === "ringing" && "Ringing..."}
-              {callStatus === "connected" && "Connected"}
+              {callStatus === "connected" && "Connecting video..."}
             </p>
 
             {/* Error display */}
@@ -118,11 +201,22 @@ export default function VideoCallUI({
                 autoPlay
                 playsInline
                 muted
-                className="w-full h-full object-cover transform scale-x-[-1]"
+                className="w-full h-full object-cover"
+                style={{ 
+                  transform: 'scaleX(-1)', // Mirror local video
+                  backgroundColor: '#1a1a1a'
+                }}
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-gray-800">
                 <VideoOff className="w-8 h-8 text-white/50" />
+              </div>
+            )}
+            
+            {/* Muted indicator */}
+            {!isAudioEnabled && (
+              <div className="absolute bottom-2 left-2 bg-red-500 rounded-full p-1">
+                <MicOff className="w-3 h-3 text-white" />
               </div>
             )}
           </div>
@@ -148,8 +242,18 @@ export default function VideoCallUI({
         {/* Connection Status */}
         {callStatus === "connected" && remoteStream && (
           <div className="absolute top-16 left-4 bg-black/30 backdrop-blur-sm px-3 py-1 rounded-lg">
-            <p className="text-white/80 text-xs">
-              {isScreenSharing ? "Screen sharing" : "Video call"}
+            <p className="text-white/80 text-xs flex items-center gap-2">
+              {isScreenSharing ? (
+                <>
+                  <Monitor className="w-3 h-3" />
+                  Screen sharing
+                </>
+              ) : (
+                <>
+                  <Video className="w-3 h-3" />
+                  Video call
+                </>
+              )}
             </p>
           </div>
         )}
@@ -221,6 +325,31 @@ export default function VideoCallUI({
           </p>
         </div>
       </div>
+
+      {/* Debug overlay (remove in production) */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="absolute bottom-20 left-4 bg-black/70 text-white text-xs p-2 rounded max-w-xs">
+          <div>Status: {callStatus}</div>
+          <div>Local Stream: {localStream ? '✅' : '❌'}</div>
+          <div>Remote Stream: {remoteStream ? '✅' : '❌'}</div>
+          <div>Video: {isVideoEnabled ? '✅' : '❌'}</div>
+          <div>Audio: {isAudioEnabled ? '✅' : '❌'}</div>
+          {remoteStream && (
+            <div>
+              Remote Tracks: {remoteStream.getTracks().map(t => 
+                `${t.kind}(${t.readyState})`
+              ).join(', ')}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
+
+<style jsx global>{`
+  /* Hide the fallback text once video is playing */
+  video:not([src=""]) ~ #remote-video-fallback {
+    display: none;
+  }
+`}</style>
