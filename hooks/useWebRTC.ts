@@ -194,10 +194,28 @@ export function useWebRTC({
         localStreamRef.current.getTracks().forEach(t => t.stop());
       }
 
+      // const stream = await navigator.mediaDevices.getUserMedia({
+      //   video: video ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" } : false,
+      //   audio: audio ? { echoCancellation: true, noiseSuppression: true, autoGainControl: true } : false,
+      // });
+
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: video ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" } : false,
-        audio: audio ? { echoCancellation: true, noiseSuppression: true, autoGainControl: true } : false,
-      });
+  video: video
+    ? {
+        width: { min: 640, ideal: 1920, max: 1920 },
+        height: { min: 480, ideal: 1080, max: 1080 },
+        frameRate: { min: 15, ideal: 30, max: 30 }, // Force smoother motion
+        facingMode: "user",
+      }
+    : false,
+  audio: audio
+    ? {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      }
+    : false,
+});
 
       localStreamRef.current = stream;
       setLocalStream(stream);
