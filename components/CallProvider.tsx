@@ -7,6 +7,8 @@ import {
   useEffect,
   ReactNode,
   useRef,
+  useCallback,
+  useMemo,
 } from "react";
 import { useSocket } from "./SocketProvider";
 import { useWebRTC } from "@/hooks/useWebRTC";
@@ -41,23 +43,29 @@ export default function CallProvider({
   currentUser,
 }: CallProviderProps) {
   const { socket } = useSocket();
-  const [incomingCall, setIncomingCall] = useState<CallInitiatedData | null>(
-    null
-  );
+  const [incomingCall, setIncomingCall] = useState<CallInitiatedData | null>(null);
   const incomingCallRef = useRef<CallInitiatedData | null>(null);
 
-  const webrtc = useWebRTC({
-    currentUserId: currentUserId || "",
-    currentUser: currentUser || {
+  // FIX: Stabilize the onCallEnded function reference
+  const handleCallEnded = useCallback(() => {
+    setIncomingCall(null);
+    incomingCallRef.current = null;
+  }, []);
+
+  // FIX: Stabilize currentUser to prevent hook re-initialization
+  const stableCurrentUser = useMemo(() => {
+    return currentUser || {
       id: currentUserId || "",
       username: "Unknown",
       name: "Unknown",
       image: null,
-    },
-    onCallEnded: () => {
-      setIncomingCall(null);
-      incomingCallRef.current = null;
-    },
+    };
+  }, [currentUser, currentUserId]);
+
+  const webrtc = useWebRTC({
+    currentUserId: currentUserId || "",
+    currentUser: stableCurrentUser,
+    onCallEnded: handleCallEnded,
   });
 
   // Handle incoming call
@@ -65,17 +73,16 @@ export default function CallProvider({
     if (!socket) return;
 
     const handleCallInitiated = (data: CallInitiatedData) => {
-      console.log("📞 Incoming call from:", data.callerName);
+      // Ignore if it's the same call ID we already know about
+      if (incomingCallRef.current?.callId === data.callId) return;
 
-      if (incomingCallRef.current?.callId === data.callId) {
-        console.log("⚠️ Duplicate call notification, ignoring...");
-        return;
-      }
+      console.log("📞 Incoming call from:", data.callerName);
 
       if (webrtc.callStatus === "idle") {
         incomingCallRef.current = data;
         setIncomingCall(data);
       } else {
+        // Busy signal
         console.log("⚠️ Already in a call, auto-rejecting...");
         socket.emit("reject-call", {
           to: data.from,
@@ -110,14 +117,10 @@ export default function CallProvider({
   }, [socket, webrtc.callStatus, webrtc.endCall]);
 
   const startVoiceCall = (user: ChatUser) => {
-    setIncomingCall(null);
-    incomingCallRef.current = null;
     webrtc.startCall(user, false);
   };
 
   const startVideoCall = (user: ChatUser) => {
-    setIncomingCall(null);
-    incomingCallRef.current = null;
     webrtc.startCall(user, true);
   };
 
@@ -130,15 +133,11 @@ export default function CallProvider({
         image: incomingCall.callerImage,
       };
 
-      // ✅ FIX: Pass the full otherUser object to answerCall
       webrtc.answerCall(
         incomingCall.callId,
         otherUser,
         incomingCall.isVideoCall
       );
-
-      // ❌ FIX: Removed the incorrect manual state mutation
-      // (webrtc.otherUser = otherUser;)
 
       setIncomingCall(null);
       incomingCallRef.current = null;
