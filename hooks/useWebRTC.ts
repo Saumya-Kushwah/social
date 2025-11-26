@@ -8,6 +8,7 @@ const ICE_SERVERS = {
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
     { urls: "stun:stun2.l.google.com:19302" },
+    // TODO: Add TURN servers here for production to handle symmetric NATs and firewalls
   ],
 };
 
@@ -43,14 +44,39 @@ export function useWebRTC({
   const isEndingCallRef = useRef(false);
   const isInitiatorRef = useRef(false);
 
+  // FIX: Refs to handle ICE candidate race conditions
+  const iceCandidateQueueRef = useRef<RTCIceCandidateInit[]>([]);
+  const isRemoteDescriptionSetRef = useRef(false);
+
+  // Helper: Process queued ICE candidates
+  const processIceQueue = useCallback(async () => {
+    if (!peerConnectionRef.current || iceCandidateQueueRef.current.length === 0) return;
+
+    console.log(`🧊 Processing ${iceCandidateQueueRef.current.length} queued ICE candidates...`);
+
+    for (const candidate of iceCandidateQueueRef.current) {
+      try {
+        await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (error) {
+        console.error("❌ Error adding queued ICE candidate:", error);
+      }
+    }
+    // Clear queue after processing
+    iceCandidateQueueRef.current = [];
+  }, []);
+
   // Create peer connection
   const createPeerConnection = useCallback(() => {
     console.log("🔧 Creating peer connection...");
+    // Reset remote description flag on new connection
+    isRemoteDescriptionSetRef.current = false;
+    iceCandidateQueueRef.current = [];
+
     const pc = new RTCPeerConnection(ICE_SERVERS);
 
     pc.onicecandidate = (event) => {
       if (event.candidate && socket && otherUserIdRef.current && callId) {
-        console.log("🧊 Sending ICE candidate");
+        // console.log("🧊 Sending ICE candidate"); // Optional: Reduce log spam
         socket.emit("webrtc-ice-candidate", {
           to: otherUserIdRef.current,
           candidate: event.candidate.toJSON(),
@@ -111,10 +137,10 @@ export function useWebRTC({
       const stream = await navigator.mediaDevices.getUserMedia({
         video: video
           ? {
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-              facingMode: "user",
-            }
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: "user",
+          }
           : false,
         audio: {
           echoCancellation: true,
@@ -123,10 +149,7 @@ export function useWebRTC({
         },
       });
 
-      console.log("✅ Got user media stream with tracks:", 
-        stream.getTracks().map(t => `${t.kind}: ${t.label}`).join(", ")
-      );
-
+      console.log("✅ Got user media stream");
       localStreamRef.current = stream;
       setLocalStream(stream);
       return stream;
@@ -191,14 +214,13 @@ export function useWebRTC({
 
         // Get local media
         const stream = await getUserMedia(video, true);
-        
+
         // Create peer connection
         const pc = createPeerConnection();
         peerConnectionRef.current = pc;
 
         // Add tracks to peer connection
         stream.getTracks().forEach((track) => {
-          console.log(`➕ Adding ${track.kind} track to peer connection`);
           pc.addTrack(track, stream);
         });
 
@@ -247,7 +269,6 @@ export function useWebRTC({
 
         // Add tracks to peer connection
         stream.getTracks().forEach((track) => {
-          console.log(`➕ Adding ${track.kind} track to peer connection`);
           pc.addTrack(track, stream);
         });
 
@@ -305,12 +326,10 @@ export function useWebRTC({
     // Stop all tracks
     localStreamRef.current?.getTracks().forEach((track) => {
       track.stop();
-      console.log(`⏹️ Stopped ${track.kind} track`);
     });
 
     screenStreamRef.current?.getTracks().forEach((track) => {
       track.stop();
-      console.log(`⏹️ Stopped screen share track`);
     });
 
     // Close peer connection
@@ -325,6 +344,8 @@ export function useWebRTC({
     screenStreamRef.current = null;
     otherUserIdRef.current = null;
     isInitiatorRef.current = false;
+    isRemoteDescriptionSetRef.current = false;
+    iceCandidateQueueRef.current = [];
 
     // Clear state
     setLocalStream(null);
@@ -344,7 +365,7 @@ export function useWebRTC({
     onCallEnded?.();
   }, [socket, callId, onCallEnded]);
 
-  // Toggle video
+  // Toggle video, audio, screen share (kept same as original)
   const toggleVideo = useCallback(() => {
     if (localStreamRef.current) {
       const videoTrack = localStreamRef.current.getVideoTracks()[0];
@@ -356,7 +377,6 @@ export function useWebRTC({
     }
   }, []);
 
-  // Toggle audio
   const toggleAudio = useCallback(() => {
     if (localStreamRef.current) {
       const audioTrack = localStreamRef.current.getAudioTracks()[0];
@@ -368,7 +388,6 @@ export function useWebRTC({
     }
   }, []);
 
-  // Toggle screen share
   const toggleScreenShare = useCallback(async () => {
     try {
       if (!isScreenSharing) {
@@ -423,7 +442,7 @@ export function useWebRTC({
     // Call accepted - CREATE OFFER (initiator only)
     socket.on("call-accepted", async ({ callId: acceptedCallId, from }) => {
       console.log("✅ Call accepted by", from);
-      
+
       if (callId === acceptedCallId && peerConnectionRef.current && isInitiatorRef.current) {
         try {
           console.log("📤 Creating and sending offer...");
@@ -431,7 +450,7 @@ export function useWebRTC({
             offerToReceiveAudio: true,
             offerToReceiveVideo: isVideoCall,
           });
-          
+
           await peerConnectionRef.current.setLocalDescription(offer);
           console.log("✅ Local description set (offer)");
 
@@ -452,14 +471,17 @@ export function useWebRTC({
     // Received offer - CREATE ANSWER (receiver only)
     socket.on("webrtc-offer", async ({ offer, from, callId: offerCallId }) => {
       console.log("📥 Received WebRTC offer from", from);
-      
+
       if (peerConnectionRef.current && callId === offerCallId && !isInitiatorRef.current) {
         try {
           console.log("📥 Setting remote description (offer)");
           await peerConnectionRef.current.setRemoteDescription(
             new RTCSessionDescription(offer)
           );
+          // FIX: Mark remote description as set and process queued candidates
+          isRemoteDescriptionSetRef.current = true;
           console.log("✅ Remote description set (offer)");
+          await processIceQueue();
 
           console.log("📤 Creating and sending answer...");
           const answer = await peerConnectionRef.current.createAnswer();
@@ -483,14 +505,17 @@ export function useWebRTC({
     // Received answer - SET REMOTE DESCRIPTION (initiator only)
     socket.on("webrtc-answer", async ({ answer, callId: answerCallId }) => {
       console.log("📥 Received WebRTC answer");
-      
+
       if (peerConnectionRef.current && callId === answerCallId && isInitiatorRef.current) {
         try {
           console.log("📥 Setting remote description (answer)");
           await peerConnectionRef.current.setRemoteDescription(
             new RTCSessionDescription(answer)
           );
-          console.log("✅ Remote description set (answer) - Connection should establish!");
+          // FIX: Mark remote description as set and process queued candidates
+          isRemoteDescriptionSetRef.current = true;
+          console.log("✅ Remote description set (answer)");
+          await processIceQueue();
         } catch (error) {
           console.error("❌ Error handling answer:", error);
           setError("Failed to establish connection");
@@ -498,28 +523,30 @@ export function useWebRTC({
       }
     });
 
-    // ICE candidate
+    // ICE candidate - QUEUE OR ADD
     socket.on("webrtc-ice-candidate", async ({ candidate, callId: candidateCallId }) => {
       if (peerConnectionRef.current && callId === candidateCallId) {
-        try {
-          await peerConnectionRef.current.addIceCandidate(
-            new RTCIceCandidate(candidate)
-          );
-          console.log("🧊 ICE candidate added");
-        } catch (error) {
-          console.error("❌ Error adding ICE candidate:", error);
+        // FIX: Check if remote description is set before adding candidate
+        if (isRemoteDescriptionSetRef.current) {
+          try {
+            await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+            console.log("🧊 ICE candidate added immediately");
+          } catch (error) {
+            console.error("❌ Error adding ICE candidate:", error);
+          }
+        } else {
+          console.warn("⏳ Remote description not set yet, queueing ICE candidate");
+          iceCandidateQueueRef.current.push(candidate);
         }
       }
     });
 
-    // Call rejected
     socket.on("call-rejected", () => {
       console.log("❌ Call was rejected");
       setError("Call was rejected");
       endCall();
     });
 
-    // Call ended
     socket.on("call-ended", () => {
       console.log("📴 Call ended by other user");
       endCall();
@@ -533,7 +560,7 @@ export function useWebRTC({
       socket.off("call-rejected");
       socket.off("call-ended");
     };
-  }, [socket, callId, isVideoCall, endCall]);
+  }, [socket, callId, isVideoCall, endCall, processIceQueue]);
 
   return {
     callStatus,

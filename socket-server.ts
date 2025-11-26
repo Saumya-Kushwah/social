@@ -6,26 +6,6 @@ import type { ServerToClientEvents, ClientToServerEvents } from "./types/chat.ty
 
 const PORT: number = parseInt(process.env.PORT || process.env.SOCKET_PORT || "3001", 10);
 
-// // ✅ IMPROVED: Support multiple origins for mobile testing
-// const getAllowedOrigins = (): (string | RegExp)[] => {
-//   const origins: (string | RegExp)[] = [
-//     "http://localhost:3000",
-//     "http://localhost:3001",
-//     process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
-//     /^http:\/\/192\.168\.\d{1,3}\.\d{1,3}:3000$/, // Local network (192.168.x.x)
-//     /^http:\/\/10\.\d{1,3}\.\d{1,3}\.\d{1,3}:3000$/, // Alternative local network
-//     /^http:\/\/172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}:3000$/, // Docker network
-//   ];
-
-//   // Add custom origins from environment
-//   if (process.env.ALLOWED_ORIGINS) {
-//     const customOrigins = process.env.ALLOWED_ORIGINS.split(",");
-//     origins.push(...customOrigins);
-//   }
-
-//   return origins;
-// };
-
 const getAllowedOrigins = (): (string | RegExp)[] => {
   const origins: (string | RegExp)[] = [
     process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
@@ -74,7 +54,7 @@ io.on("connection", (socket: Socket<ClientToServerEvents, ServerToClientEvents>)
 
   // User authentication with type assertion
   const userId: string = socket.handshake.auth.userId as string;
-  
+
   if (userId) {
     onlineUsers.set(userId, socket.id);
     socket.broadcast.emit("user-online", userId);
@@ -95,11 +75,26 @@ io.on("connection", (socket: Socket<ClientToServerEvents, ServerToClientEvents>)
     console.log(`👋 User ${userId} left conversation ${conversationId}`);
   });
 
+  // Typing indicator
+  socket.on("typing", (data: { conversationId: string; isTyping: boolean }): void => {
+    if (!userId) return;
+    socket.to(data.conversationId).emit("user-typing", {
+      conversationId: data.conversationId,
+      userId,
+      isTyping: data.isTyping,
+    });
+  });
+
   // Send message
   socket.on("send-message", async (data: { conversationId: string; content: string }): Promise<void> => {
     try {
       if (!userId) {
         console.error("❌ Cannot send message: No userId");
+        return;
+      }
+
+      if (!data.content || data.content.trim() === "") {
+        console.warn("⚠️ Cannot send empty message");
         return;
       }
 
@@ -176,25 +171,15 @@ io.on("connection", (socket: Socket<ClientToServerEvents, ServerToClientEvents>)
     }
   });
 
-  // Typing indicator
-  socket.on("typing", (data: { conversationId: string; isTyping: boolean }): void => {
-    if (!userId) return;
-    socket.to(data.conversationId).emit("user-typing", {
-      conversationId: data.conversationId,
-      userId,
-      isTyping: data.isTyping,
-    });
-  });
-
   // ========== VIDEO CALL SIGNALING ==========
 
   // Initiate call
-  socket.on("initiate-call", (data: { 
-    to: string; 
-    callId: string; 
-    isVideoCall: boolean; 
-    callerName: string; 
-    callerImage: string | null 
+  socket.on("initiate-call", (data: {
+    to: string;
+    callId: string;
+    isVideoCall: boolean;
+    callerName: string;
+    callerImage: string | null
   }): void => {
     const targetSocketId: string | undefined = onlineUsers.get(data.to);
     if (targetSocketId) {
@@ -255,10 +240,10 @@ io.on("connection", (socket: Socket<ClientToServerEvents, ServerToClientEvents>)
   });
 
   // WebRTC Offer
-  socket.on("webrtc-offer", (data: { 
-    to: string; 
-    offer: RTCSessionDescriptionInit; 
-    callId: string 
+  socket.on("webrtc-offer", (data: {
+    to: string;
+    offer: RTCSessionDescriptionInit;
+    callId: string
   }): void => {
     const targetSocketId: string | undefined = onlineUsers.get(data.to);
     if (targetSocketId) {
@@ -274,10 +259,10 @@ io.on("connection", (socket: Socket<ClientToServerEvents, ServerToClientEvents>)
   });
 
   // WebRTC Answer
-  socket.on("webrtc-answer", (data: { 
-    to: string; 
-    answer: RTCSessionDescriptionInit; 
-    callId: string 
+  socket.on("webrtc-answer", (data: {
+    to: string;
+    answer: RTCSessionDescriptionInit;
+    callId: string
   }): void => {
     const targetSocketId: string | undefined = onlineUsers.get(data.to);
     if (targetSocketId) {
@@ -293,10 +278,10 @@ io.on("connection", (socket: Socket<ClientToServerEvents, ServerToClientEvents>)
   });
 
   // WebRTC ICE Candidate
-  socket.on("webrtc-ice-candidate", (data: { 
-    to: string; 
-    candidate: RTCIceCandidateInit; 
-    callId: string 
+  socket.on("webrtc-ice-candidate", (data: {
+    to: string;
+    candidate: RTCIceCandidateInit;
+    callId: string
   }): void => {
     const targetSocketId: string | undefined = onlineUsers.get(data.to);
     if (targetSocketId) {
@@ -318,11 +303,6 @@ io.on("connection", (socket: Socket<ClientToServerEvents, ServerToClientEvents>)
       console.log(`👤 User ${userId} is now offline (${onlineUsers.size} users remaining)`);
     }
   });
-
-  // ✅ ADDED: Handle errors
-  socket.on("error", (error: Error): void => {
-    console.error("🔴 Socket error:", error);
-  });
 });
 
 // Error handling
@@ -337,15 +317,15 @@ httpServer.on("error", (err: Error): void => {
 // Graceful shutdown
 const gracefulShutdown = (signal: string): void => {
   console.log(`\n🛑 ${signal} received, closing server gracefully...`);
-  
+
   // Close socket.io connections
   io.close(() => {
     console.log("✅ All socket connections closed");
-    
+
     // Close HTTP server
     httpServer.close(() => {
       console.log("✅ HTTP server closed");
-      
+
       // Disconnect from database
       prisma.$disconnect().then(() => {
         console.log("✅ Database disconnected");
